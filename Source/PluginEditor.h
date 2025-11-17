@@ -1,66 +1,52 @@
+\
 #pragma once
-
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
-//==============================================================================
-class HistoryOpenGLRenderer : public juce::Component,
-                              private juce::OpenGLRenderer,
-                              private juce::Timer
+// OpenGL renderer component that draws a scrolling history-volume-curve.
+// Supports zoom via mouse wheel and requests MSAA via pixel format.
+class HistoryOpenGLComponent : public juce::Component,
+                               private juce::OpenGLRenderer,
+                               private juce::Timer
 {
 public:
-    HistoryOpenGLRenderer(HistoryVolumeAudioProcessor&);
-    ~HistoryOpenGLRenderer() override;
+    HistoryOpenGLComponent(HistoryVolumeCurveAudioProcessor& p);
+    ~HistoryOpenGLComponent() override;
 
-    void paint (juce::Graphics&) override;
-    void resized() override;
+    void paint(juce::Graphics&) override {}
+    void resized() override {}
 
-    // zoom controls
-    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override;
-
-    // OpenGLRenderer
     void newOpenGLContextCreated() override;
     void openGLContextClosing() override;
     void renderOpenGL() override;
 
+    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override;
+
 private:
-    HistoryVolumeAudioProcessor& processor;
+    HistoryVolumeCurveAudioProcessor& processor;
     juce::OpenGLContext openGLContext;
 
-    // GL resources
-    GLuint vbo = 0;
-    GLuint shaderProgram = 0;
-    GLint attrPos = -1;
-    GLint uniOffset = -1;
-    GLint uniScale = -1;
-    GLint uniColor = -1;
+    std::vector<float> vertexBuffer; // x,y pairs per pixel
+    std::vector<float> sampleScratch;
 
-    std::vector<float> vertexData; // x,y pairs
-    std::vector<float> tempSamples;
+    std::atomic<float> samplesPerPixel { 64.0f }; // zoom
+    int msaaLevel = 4; // default 4x MSAA
 
-    // Zoom: samples per pixel (lower = more zoomed-in)
-    std::atomic<float> samplesPerPixel { 64.0f };
-    std::atomic<float> scrollPositionSeconds { 0.0f };
-
-    // Timer to update scrollPositionSeconds smoothly
     void timerCallback() override;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HistoryOpenGLRenderer)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HistoryOpenGLComponent)
 };
 
-//==============================================================================
-class HistoryVolumeAudioProcessorEditor  : public juce::AudioProcessorEditor
+class HistoryVolumeCurveAudioProcessorEditor  : public juce::AudioProcessorEditor
 {
 public:
-    HistoryVolumeAudioProcessorEditor (HistoryVolumeAudioProcessor&);
-    ~HistoryVolumeAudioProcessorEditor() override;
+    HistoryVolumeCurveAudioProcessorEditor (HistoryVolumeCurveAudioProcessor&);
+    ~HistoryVolumeCurveAudioProcessorEditor() override;
 
-    void paint (juce::Graphics&) override;
-    void resized() override;
+    void paint (juce::Graphics&) override {}
+    void resized() override {}
 
 private:
-    HistoryVolumeAudioProcessor& processor;
-    HistoryOpenGLRenderer glView;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HistoryVolumeAudioProcessorEditor)
+    HistoryOpenGLComponent glComp;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HistoryVolumeCurveAudioProcessorEditor)
 };

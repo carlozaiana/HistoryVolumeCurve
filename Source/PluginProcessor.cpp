@@ -1,108 +1,92 @@
+\
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-HistoryVolumeAudioProcessor::HistoryVolumeAudioProcessor()
+LockFreeRingBuffer::LockFreeRingBuffer(size_t capacity)
+    : buffer_(capacity, 0.0f), capacity_(capacity)
+{
+}
+
+void LockFreeRingBuffer::push(float v)
+{
+    size_t idx = writeIndex_.fetch_add(1, std::memory_order_relaxed) % capacity_;
+    buffer_[idx] = v;
+    totalWritten_.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Copies up to count samples starting at startIndex (0 = oldest available)
+// Returns number of samples copied
+int LockFreeRingBuffer::readBlock(float* dest, int startIndex, int count)
+{
+    int64_t written = totalWritten_.load(std::memory_order_relaxed);
+    int available = (int)std::min<int64_t>(written, (int64_t)capacity_);
+    if (count <= 0 || startIndex >= available) return 0;
+
+    int toCopy = std::min(count, available - startIndex);
+    int oldestGlobal = (int)std::max<int64_t>(0, written - (int64_t)capacity_);
+
+    for (int i = 0; i < toCopy; ++i)
+    {
+        int globalIdx = oldestGlobal + startIndex + i;
+        int ringIdx = globalIdx % (int)capacity_;
+        dest[i] = buffer_[ringIdx];
+    }
+    return toCopy;
+}
+
+int LockFreeRingBuffer::available() const noexcept
+{
+    int64_t written = totalWritten_.load(std::memory_order_relaxed);
+    return (int)std::min<int64_t>(written, (int64_t)capacity_);
+}
+
+//==============================================================================
+
+HistoryVolumeCurveAudioProcessor::HistoryVolumeCurveAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
-     : AudioProcessor (BusesProperties()
-#if ! JucePlugin_IsMidiEffect
-#if ! JucePlugin_IsSynth
-                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-#endif
-                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
-#endif
-                       )
+    : AudioProcessor (BusesProperties()
+                      .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+                      .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      history(2 * 48000 * 120) // reserve ~120 seconds at 48k
 #endif
 {
-    historyBuffer.assign(historySize, 0.0f);
 }
 
-HistoryVolumeAudioProcessor::~HistoryVolumeAudioProcessor() {}
+HistoryVolumeCurveAudioProcessor::~HistoryVolumeCurveAudioProcessor() {}
 
-const juce::String HistoryVolumeAudioProcessor::getName() const { return JucePlugin_Name; }
-bool HistoryVolumeAudioProcessor::acceptsMidi() const { return false; }
-bool HistoryVolumeAudioProcessor::producesMidi() const { return false; }
-double HistoryVolumeAudioProcessor::getTailLengthSeconds() const { return 0.0; }
-int HistoryVolumeAudioProcessor::getNumPrograms() { return 1; }
-int HistoryVolumeAudioProcessor::getCurrentProgram() { return 0; }
-void HistoryVolumeAudioProcessor::setCurrentProgram (int) {}
-const juce::String HistoryVolumeAudioProcessor::getProgramName (int) { return {}; }
-void HistoryVolumeAudioProcessor::changeProgramName (int, const juce::String&) {}
+const juce::String HistoryVolumeCurveAudioProcessor::getName() const { return JucePlugin_Name; }
 
-void HistoryVolumeAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void HistoryVolumeCurveAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    currentSampleRate = sampleRate;
-    // Optionally resize history to keep e.g. 120 s at sampleRate
-    // historySize = (int)(sampleRate * 120.0);
-    // historyBuffer.assign(historySize, 0.0f);
+    ignoreUnused (sampleRate, samplesPerBlock);
 }
 
-void HistoryVolumeAudioProcessor::releaseResources() {}
+void HistoryVolumeCurveAudioProcessor::releaseResources() {}
 
-bool HistoryVolumeAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool HistoryVolumeCurveAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    // Accept any layout
-    return true;
+    return layouts.getMainInputChannelSet() == layouts.getMainOutputChannelSet();
 }
 
-void HistoryVolumeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void HistoryVolumeCurveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     const int numChannels = buffer.getNumChannels();
     const int numSamples = buffer.getNumSamples();
 
-    // compute peak or absolute average per sample frame across channels
     for (int i = 0; i < numSamples; ++i)
     {
-        float maxVal = 0.0f;
+        float maxv = 0.0f;
         for (int ch = 0; ch < numChannels; ++ch)
-            maxVal = std::max(maxVal, std::abs(buffer.getReadPointer(ch)[i]));
+            maxv = std::max(maxv, std::abs(buffer.getReadPointer(ch)[i]));
 
-        writeToHistory(maxVal);
+        // push the per-sample peak to ring buffer
+        history.push(maxv);
     }
 }
 
-// lock-free single-value write helper
-inline void HistoryVolumeAudioProcessor::writeToHistory(float value)
+juce::AudioProcessorEditor* HistoryVolumeCurveAudioProcessor::createEditor()
 {
-    int idx = writeIndex.fetch_add(1, std::memory_order_relaxed) % historySize;
-    historyBuffer[idx] = value;
-    totalWritten.fetch_add(1, std::memory_order_relaxed);
+    return new HistoryVolumeCurveAudioProcessorEditor (*this);
 }
 
-void HistoryVolumeAudioProcessor::pushSamplesToHistory (const float* samples, int numSamples, int numChannels)
-{
-    // Not used for now - processBlock handles it
-    (void) samples; (void) numSamples; (void) numChannels;
-}
-
-int HistoryVolumeAudioProcessor::readHistorySamples (float* dest, int destSize, int startIndex, int sampleCount)
-{
-    // startIndex is relative to the oldest sample we can give (i.e. totalWritten - historySize)
-    const int written = totalWritten.load(std::memory_order_relaxed);
-    const int available = std::min(written, historySize);
-    if (sampleCount <= 0 || destSize < sampleCount) return 0;
-
-    int oldestGlobalIndex = std::max(0, written - historySize);
-    int globalStart = oldestGlobalIndex + startIndex;
-    if (globalStart < oldestGlobalIndex) globalStart = oldestGlobalIndex;
-
-    int copied = 0;
-    for (int i = 0; i < sampleCount && copied < destSize; ++i)
-    {
-        int globalIdx = globalStart + i;
-        if (globalIdx >= written) break;
-        int ringIdx = (globalIdx % historySize);
-        dest[copied++] = historyBuffer[ringIdx];
-    }
-    return copied;
-}
-
-//==============================================================================
-juce::AudioProcessorEditor* HistoryVolumeAudioProcessor::createEditor()
-{
-    return new class HistoryVolumeAudioProcessorEditor (*this);
-}
-
-bool HistoryVolumeAudioProcessor::hasEditor() const { return true; }
-
-void HistoryVolumeAudioProcessor::getStateInformation (juce::MemoryBlock& destData) {}
-void HistoryVolumeAudioProcessor::setStateInformation (const void* data, int sizeInBytes) {}
+bool HistoryVolumeCurveAudioProcessor::hasEditor() const { return true; }
