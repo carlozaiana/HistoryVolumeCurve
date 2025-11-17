@@ -1,11 +1,21 @@
-\
-name: Build VST3 (macOS)
+name: Build macOS VST3
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+  concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-macos:
-    runs-on: macOS-latest
+  build:
+    runs-on: macos-13   # Try this first; typically less queued than macos-12
+    timeout-minutes: 60
+    env:
+      JUCE_TAG: "7.0.9" # Keep in sync with CMakeLists.txt
+      
     steps:
       - uses: actions/checkout@v4
 
