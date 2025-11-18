@@ -37,10 +37,8 @@ target_compile_definitions(HistoryVolumeCurve
     PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
-        JUCE_OPENGL_MULTISAMPLING=1
 )
 
 target_link_libraries(HistoryVolumeCurve PRIVATE
     juce::juce_audio_utils
-    juce::juce_opengl
 )
