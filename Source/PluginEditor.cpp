@@ -1,15 +1,18 @@
 #include "PluginEditor.h"
+#include <algorithm>
 #include <cmath>
 
 //==============================================================================
 // Helper: map linear 0..1 to a perceptual/log-like curve 0..1
 static inline float logScale (float in)
 {
+    // log10(1 + 9x) / log10(10) maps 0 -> 0, 1 -> 1 and emphasizes low values
     return std::log10 (1.0f + 9.0f * in) / std::log10 (10.0f);
 }
 
 //==============================================================================
-// HistoryOpenGLComponent (now just a 2D Graphics component)
+// HistoryOpenGLComponent (now purely 2D Graphics-based)
+
 HistoryOpenGLComponent::HistoryOpenGLComponent (HistoryVolumeCurveAudioProcessor& p)
     : processor (p)
 {
@@ -24,7 +27,6 @@ HistoryOpenGLComponent::~HistoryOpenGLComponent()
 
 void HistoryOpenGLComponent::timerCallback()
 {
-    // repaint continuously for smooth motion
     repaint();
 }
 
@@ -53,14 +55,13 @@ void HistoryOpenGLComponent::paint (juce::Graphics& g)
     if (w <= 1 || h <= 1)
         return;
 
-    const float spp = samplesPerPixel.load();      // samples per pixel
+    const float spp    = samplesPerPixel.load(); // samples per pixel
     const int   pixels = std::max (2, w);
-    const int   samplesToShow = (int) std::ceil (spp * pixels);
+    const int   need   = (int) std::ceil (spp * pixels);
 
-    sampleScratch.resize (samplesToShow);
+    sampleScratch.resize (need);
 
     const int available     = processor.history.available();
-    const int need          = samplesToShow;
     const int startRelative = std::max (0, available - need);
 
     // Copy history into a temporary buffer
@@ -106,7 +107,7 @@ void HistoryOpenGLComponent::paint (juce::Graphics& g)
 }
 
 //==============================================================================
-// Editor (unchanged except for including the above implementation)
+// Editor
 
 HistoryVolumeCurveAudioProcessorEditor::HistoryVolumeCurveAudioProcessorEditor (HistoryVolumeCurveAudioProcessor& p)
     : AudioProcessorEditor (&p), glComp (p)
@@ -116,11 +117,13 @@ HistoryVolumeCurveAudioProcessorEditor::HistoryVolumeCurveAudioProcessorEditor (
     setSize (800, 200);
 }
 
-HistoryVolumeCurveAudioProcessorEditor::~HistoryVolumeCurveAudioProcessorEditor()
+HistoryVolumeCurveAudioProcessorEditor::~HistoryVolumeCurveAudioProcessorEditor() = default;
+
+void HistoryVolumeCurveAudioProcessorEditor::paint (juce::Graphics& g)
 {
+    g.fillAll (juce::Colours::black);
 }
 
-// If you don't already have it, ensure you have:
 void HistoryVolumeCurveAudioProcessorEditor::resized()
 {
     glComp.setBounds (getLocalBounds());
