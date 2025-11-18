@@ -23,6 +23,8 @@ juce_add_plugin(HistoryVolumeCurve
     FORMATS VST3
     PRODUCT_NAME "HistoryVolumeCurve"
 )
+# This is the missing piece:
+juce_generate_juce_header(HistoryVolumeCurve)
 
 target_sources(HistoryVolumeCurve PRIVATE
     Source/PluginProcessor.cpp
