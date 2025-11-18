@@ -66,9 +66,15 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    // History buffer accessible from the editor
+    // History buffer accessible from the editor (stores smoothed envelope)
     LockFreeRingBuffer history;
 
 private:
+    // Envelope follower state for smooth volume curve
+    float  levelEnv      = 0.0f;   // current envelope value (0..1)
+    float  attackCoeff   = 0.0f;   // coefficient for rising edges
+    float  releaseCoeff  = 0.0f;   // coefficient for falling edges
+    double currentSampleRate = 44100.0;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HistoryVolumeCurveAudioProcessor)
 };

@@ -1,5 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <algorithm>
+#include <cmath>
 
 //==============================================================================
 // LockFreeRingBuffer
@@ -53,7 +55,7 @@ HistoryVolumeCurveAudioProcessor::HistoryVolumeCurveAudioProcessor()
     : AudioProcessor (BusesProperties()
                         .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
                         .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      history (2 * 48000 * 120) // ~120 seconds at 48k
+      history (2 * 48000 * 120) // ~120 seconds at 48 kHz (per-sample envelope)
 #else
     : history (2 * 48000 * 120)
 #endif
@@ -103,7 +105,7 @@ double HistoryVolumeCurveAudioProcessor::getTailLengthSeconds() const
 }
 
 //==============================================================================
-// Programs (we'll just implement a single "dummy" program)
+// Programs (single dummy program)
 
 int HistoryVolumeCurveAudioProcessor::getNumPrograms()
 {
@@ -132,7 +134,22 @@ void HistoryVolumeCurveAudioProcessor::changeProgramName (int, const juce::Strin
 
 void HistoryVolumeCurveAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    juce::ignoreUnused (sampleRate, samplesPerBlock);
+    juce::ignoreUnused (samplesPerBlock);
+
+    currentSampleRate = sampleRate;
+
+    // Envelope time constants (tweak to taste)
+    const float attackMs  = 5.0f;    // fast attack
+    const float releaseMs = 250.0f;  // slow-ish release
+
+    const float attackTimeSamples  = (float) (attackMs  * 0.001 * currentSampleRate);
+    const float releaseTimeSamples = (float) (releaseMs * 0.001 * currentSampleRate);
+
+    // Exponential envelope coefficients
+    attackCoeff  = std::exp (-1.0f / attackTimeSamples);
+    releaseCoeff = std::exp (-1.0f / releaseTimeSamples);
+
+    levelEnv = 0.0f;
 }
 
 void HistoryVolumeCurveAudioProcessor::releaseResources()
@@ -160,8 +177,12 @@ void HistoryVolumeCurveAudioProcessor::processBlock (juce::AudioBuffer<float>& b
         for (int ch = 0; ch < numChannels; ++ch)
             maxv = std::max (maxv, std::abs (buffer.getReadPointer (ch)[i]));
 
-        // push the per-sample peak into the ring buffer
-        history.push (maxv);
+        // Envelope follower: smooth volume curve
+        const float coeff = (maxv > levelEnv ? attackCoeff : releaseCoeff);
+        levelEnv = coeff * levelEnv + (1.0f - coeff) * maxv;
+
+        // Push smoothed envelope value into history
+        history.push (levelEnv);
     }
 }
 
