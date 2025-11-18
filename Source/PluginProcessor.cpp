@@ -53,31 +53,102 @@ HistoryVolumeCurveAudioProcessor::HistoryVolumeCurveAudioProcessor()
     : AudioProcessor (BusesProperties()
                         .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
                         .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      history (2 * 48000 * 120) // reserve ~120 seconds at 48k
+      history (2 * 48000 * 120) // ~120 seconds at 48k
+#else
+    : history (2 * 48000 * 120)
 #endif
 {
 }
 
-HistoryVolumeCurveAudioProcessor::~HistoryVolumeCurveAudioProcessor() {}
+HistoryVolumeCurveAudioProcessor::~HistoryVolumeCurveAudioProcessor() = default;
 
 const juce::String HistoryVolumeCurveAudioProcessor::getName() const
 {
     return JucePlugin_Name;
 }
 
+//==============================================================================
+// Required overrides describing plugin capabilities
+
+bool HistoryVolumeCurveAudioProcessor::acceptsMidi() const
+{
+   #if JucePlugin_WantsMidiInput
+    return true;
+   #else
+    return false;
+   #endif
+}
+
+bool HistoryVolumeCurveAudioProcessor::producesMidi() const
+{
+   #if JucePlugin_ProducesMidiOutput
+    return true;
+   #else
+    return false;
+   #endif
+}
+
+bool HistoryVolumeCurveAudioProcessor::isMidiEffect() const
+{
+   #if JucePlugin_IsMidiEffect
+    return true;
+   #else
+    return false;
+   #endif
+}
+
+double HistoryVolumeCurveAudioProcessor::getTailLengthSeconds() const
+{
+    return 0.0;
+}
+
+//==============================================================================
+// Programs (we'll just implement a single "dummy" program)
+
+int HistoryVolumeCurveAudioProcessor::getNumPrograms()
+{
+    return 1;
+}
+
+int HistoryVolumeCurveAudioProcessor::getCurrentProgram()
+{
+    return 0;
+}
+
+void HistoryVolumeCurveAudioProcessor::setCurrentProgram (int)
+{
+}
+
+const juce::String HistoryVolumeCurveAudioProcessor::getProgramName (int)
+{
+    return {};
+}
+
+void HistoryVolumeCurveAudioProcessor::changeProgramName (int, const juce::String&)
+{
+}
+
+//==============================================================================
+
 void HistoryVolumeCurveAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    ignoreUnused (sampleRate, samplesPerBlock);
+    juce::ignoreUnused (sampleRate, samplesPerBlock);
 }
 
-void HistoryVolumeCurveAudioProcessor::releaseResources() {}
+void HistoryVolumeCurveAudioProcessor::releaseResources()
+{
+}
 
+#ifndef JucePlugin_PreferredChannelConfigurations
 bool HistoryVolumeCurveAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
+    // Only allow symmetrical input/output layouts
     return layouts.getMainInputChannelSet() == layouts.getMainOutputChannelSet();
 }
+#endif
 
-void HistoryVolumeCurveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void HistoryVolumeCurveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
+                                                     juce::MidiBuffer&)
 {
     const int numChannels = buffer.getNumChannels();
     const int numSamples  = buffer.getNumSamples();
@@ -89,10 +160,12 @@ void HistoryVolumeCurveAudioProcessor::processBlock (juce::AudioBuffer<float>& b
         for (int ch = 0; ch < numChannels; ++ch)
             maxv = std::max (maxv, std::abs (buffer.getReadPointer (ch)[i]));
 
-        // push the per-sample peak to ring buffer
+        // push the per-sample peak into the ring buffer
         history.push (maxv);
     }
 }
+
+//==============================================================================
 
 juce::AudioProcessorEditor* HistoryVolumeCurveAudioProcessor::createEditor()
 {
@@ -102,6 +175,21 @@ juce::AudioProcessorEditor* HistoryVolumeCurveAudioProcessor::createEditor()
 bool HistoryVolumeCurveAudioProcessor::hasEditor() const
 {
     return true;
+}
+
+//==============================================================================
+// State (no parameters yet, so we leave these empty)
+
+void HistoryVolumeCurveAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    juce::ignoreUnused (destData);
+    // If you add parameters, save them here.
+}
+
+void HistoryVolumeCurveAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    juce::ignoreUnused (data, sizeInBytes);
+    // If you add parameters, restore them here.
 }
 
 //==============================================================================
