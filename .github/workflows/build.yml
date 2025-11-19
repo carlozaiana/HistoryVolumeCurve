@@ -18,10 +18,12 @@ jobs:
         run: cmake --build build --config Release --parallel 4
 
       - name: Analyze Build Artifacts
-        run: ls -R build/SmoothScope_artifacts/
+        run: |
+          mkdir -p artifacts
+          find build -name "*.vst3" -exec cp -R {} artifacts/ \; || true
 
       - name: Upload VST3
         uses: actions/upload-artifact@v4
         with:
           name: SmoothScope-VST3-Universal
-          path: build/SmoothScope_artifacts/Release/VST3/SmoothScope.vst3
+          path: artifacts
