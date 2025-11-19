@@ -1,42 +1,58 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-SmoothScopeAudioProcessor::SmoothScopeAudioProcessor()
-     : AudioProcessor (BusesProperties().withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
+SmoothVolumeHistoryProcessor::SmoothVolumeHistoryProcessor()
+     : AudioProcessor (BusesProperties()
+                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
 }
 
-SmoothScopeAudioProcessor::~SmoothScopeAudioProcessor() {}
-
-void SmoothScopeAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock) {}
-
-void SmoothScopeAudioProcessor::releaseResources() {}
-
-void SmoothScopeAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void SmoothVolumeHistoryProcessor::prepareToPlay (double sr, int)
 {
-    juce::ScopedNoDenormals noDenormals;
-    
-    // Calculate RMS of the current block (Left + Right combined for simplicity)
-    float rms = buffer.getRMSLevel(0, 0, buffer.getNumSamples());
-    
-    // If stereo, average with right channel
-    if (getTotalNumInputChannels() > 1)
+    sampleRate = sr;
+}
+
+void SmoothVolumeHistoryProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    const int numSamples = buffer.getNumSamples();
+    const int numChannels = buffer.getNumChannels();
+    const int subBlockSize = 32;                      // ← this is what makes it jitter-free
+
+    int pos = 0;
+    while (pos < numSamples)
     {
-        float rightRms = buffer.getRMSLevel(1, 0, buffer.getNumSamples());
-        rms = (rms + rightRms) * 0.5f;
+        int blockSize = juce::jmin (subBlockSize, numSamples - pos);
+        float peak = 0.0f;
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float* channelData = buffer.getReadPointer (ch, pos);
+            for (int i = 0; i < blockSize; ++i)
+                peak = juce::jmax (peak, std::abs (channelData[i]));
+        }
+
+        float db = peak > 0.00001f ? 20.0f * std::log10f (peak) : -100.0f;
+
+        {
+            juce::ScopedLock sl (levelLock);
+            levelHistory.push_back (db);
+            if (levelHistory.size() > 1'500'000)          // ~5–6 min at 48 kHz, more than enough
+                levelHistory.pop_front();
+        }
+
+        pos += blockSize;
     }
-
-    // Push to GUI FIFO
-    pushToFifo(rms);
+    // audio is passed through unchanged
 }
 
-juce::AudioProcessorEditor* SmoothScopeAudioProcessor::createEditor()
-{
-    return new SmoothScopeAudioProcessorEditor (*this);
-}
-
+//==============================================================================
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new SmoothScopeAudioProcessor();
+    return new SmoothVolumeHistoryProcessor();
+}
+
+juce::AudioProcessorEditor* SmoothVolumeHistoryProcessor::createEditor()
+{
+    return new SmoothVolumeHistoryEditor (*this);
 }

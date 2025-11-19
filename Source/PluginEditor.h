@@ -1,41 +1,36 @@
 #pragma once
-
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
-class SmoothScopeAudioProcessorEditor : public juce::AudioProcessorEditor,
-                                        public juce::Timer
+class VolumeGraph : public juce::Component, private juce::Timer
 {
 public:
-    SmoothScopeAudioProcessorEditor (SmoothScopeAudioProcessor&);
-    ~SmoothScopeAudioProcessorEditor() override;
-
-    // --- Component Lifecycle ---
+    VolumeGraph (SmoothVolumeHistoryProcessor&);
     void paint (juce::Graphics&) override;
-    void resized() override;
-    void timerCallback() override;
-
-    // --- Interaction ---
-    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
+    void resized() override {}
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
 private:
-    SmoothScopeAudioProcessor& audioProcessor;
+    void timerCallback() override { repaint(); }
 
-    // --- Visualization Data ---
-    // A circular buffer to hold history for the GUI
-    static constexpr int historySize = 5000; 
-    std::vector<float> historyBuffer;
-    int historyWriteIndex = 0;
+    SmoothVolumeHistoryProcessor& processor;
 
-    // --- Zoom Parameters ---
-    float zoomX = 1.0f;
-    float zoomY = 1.0f;
+    double visibleSeconds = 15.0;      // default time window
+    double yMinDb = -90.0;
+    double yMaxDb = 6.0;
 
-    // Constants for constraints
-    const float minZoomX = 0.5f;
-    const float maxZoomX = 50.0f;
-    const float minZoomY = 0.5f;
-    const float maxZoomY = 10.0f;
+    const int subBlockSize = 32;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SmoothScopeAudioProcessorEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VolumeGraph)
+};
+
+class SmoothVolumeHistoryEditor : public juce::AudioProcessorEditor
+{
+public:
+    SmoothVolumeHistoryEditor (SmoothVolumeHistoryProcessor&);
+    void resized() override;
+
+private:
+    VolumeGraph graph;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SmoothVolumeHistoryEditor)
 };
