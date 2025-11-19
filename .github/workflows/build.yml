@@ -1,0 +1,27 @@
+name: Build Universal VST3
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    name: Build on macOS
+    runs-on: macos-14
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Analyze Build Artifacts
+        run: ls -R build/SmoothScope_artifacts/
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmoothScope-VST3-Universal
+          path: build/SmoothScope_artifacts/Release/VST3/SmoothScope.vst3
