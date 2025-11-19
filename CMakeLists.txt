@@ -1,45 +1,49 @@
-cmake_minimum_required(VERSION 3.15)
-project(HistoryVolumeCurve VERSION 0.0.3)
+cmake_minimum_required(VERSION 3.22)
 
-set(CMAKE_CXX_STANDARD 17)
+project(SmoothScope VERSION 1.0.0)
 
+# --- Architecture & Deployment Configuration ---
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version")
+set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build architectures")
+
+# --- Dependencies ---
+# We use FetchContent to get JUCE 7 (Stable)
 include(FetchContent)
 FetchContent_Declare(
-  JUCE
-  GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-  GIT_TAG 7.0.10
+    juce
+    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+    GIT_TAG        master
 )
-FetchContent_MakeAvailable(JUCE)
+FetchContent_MakeAvailable(juce)
 
-juce_add_plugin(HistoryVolumeCurve
-    PLUGIN_NAME "HistoryVolumeCurve"
-    COMPANY_NAME "StudioP"
-    BUNDLE_ID com.yourcompany.historyvolumecurve
+# --- Plugin Definition ---
+juce_add_plugin(SmoothScope
+    COMPANY_NAME "ArchitectLabs"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
-    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD TRUE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     FORMATS VST3
-    PRODUCT_NAME "HistoryVolumeCurve"
-)
-# This is the missing piece:
-juce_generate_juce_header(HistoryVolumeCurve)
-
-target_sources(HistoryVolumeCurve PRIVATE
-    Source/PluginProcessor.cpp
-    Source/PluginProcessor.h
-    Source/PluginEditor.cpp
-    Source/PluginEditor.h
+    PRODUCT_NAME "SmoothScope"
 )
 
-target_compile_definitions(HistoryVolumeCurve
+# --- Source Files ---
+target_sources(SmoothScope
     PRIVATE
-        JUCE_WEB_BROWSER=0
-        JUCE_USE_CURL=0
-        JUCE_VST3_CAN_REPLACE_VST2=0
+        Source/PluginProcessor.h
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.h
+        Source/PluginEditor.cpp
 )
 
-target_link_libraries(HistoryVolumeCurve PRIVATE
-    juce::juce_audio_utils
+# --- Compile Definitions & Linker Flags ---
+target_compile_definitions(SmoothScope PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
 )
+
+juce_generate_juce_header(SmoothScope)
+
+# Ensure strict standard compliance
+set_target_properties(SmoothScope PROPERTIES CXX_STANDARD 17)
