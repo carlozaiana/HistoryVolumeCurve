@@ -1,130 +1,163 @@
+#include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include <algorithm>
-#include <cmath>
 
-//==============================================================================
-// Helper: map linear 0..1 to a perceptual/log-like curve 0..1
-static inline float logScale (float in)
+SmoothScopeAudioProcessorEditor::SmoothScopeAudioProcessorEditor (SmoothScopeAudioProcessor& p)
+    : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    // log10(1 + 9x) / log10(10) maps 0 -> 0, 1 -> 1 and emphasizes low values
-    return std::log10 (1.0f + 9.0f * in) / std::log10 (10.0f);
+    // Initialize history buffer
+    historyBuffer.resize(historySize, 0.0f);
+
+    setResizable(true, true);
+    setResizeLimits(300, 200, 2000, 1000);
+    setSize (600, 300);
+
+    // 60 FPS refresh rate for smoothness
+    startTimerHz(60);
 }
 
-//==============================================================================
-// HistoryOpenGLComponent (now purely 2D Graphics-based)
-
-HistoryOpenGLComponent::HistoryOpenGLComponent (HistoryVolumeCurveAudioProcessor& p)
-    : processor (p)
-{
-    setOpaque (true);
-    startTimerHz (60); // repaint at ~60 fps
-}
-
-HistoryOpenGLComponent::~HistoryOpenGLComponent()
+SmoothScopeAudioProcessorEditor::~SmoothScopeAudioProcessorEditor()
 {
     stopTimer();
 }
 
-void HistoryOpenGLComponent::timerCallback()
+void SmoothScopeAudioProcessorEditor::timerCallback()
 {
+    // Pull data from Audio Processor's FIFO
+    bool newData = false;
+    
+    // We loop to drain the FIFO so we don't fall behind
+    while (true)
+    {
+        int currentRead = audioProcessor.fifoReadIndex.load(std::memory_order_acquire);
+        int currentWrite = audioProcessor.fifoWriteIndex.load(std::memory_order_acquire);
+
+        if (currentRead == currentWrite)
+            break; // Empty
+
+        // Get value
+        float val = audioProcessor.fifoBuffer[currentRead];
+
+        // Update Read Index
+        int nextRead = (currentRead + 1) % SmoothScopeAudioProcessor::fifoSize;
+        audioProcessor.fifoReadIndex.store(nextRead, std::memory_order_release);
+
+        // Add to GUI History Circular Buffer
+        historyBuffer[historyWriteIndex] = val;
+        historyWriteIndex = (historyWriteIndex + 1) % historySize;
+        
+        newData = true;
+    }
+
+    if (newData)
+        repaint();
+}
+
+void SmoothScopeAudioProcessorEditor::paint (juce::Graphics& g)
+{
+    g.fillAll (juce::Colours::black);
+
+    auto area = getLocalBounds();
+    float width = (float)area.getWidth();
+    float height = (float)area.getHeight();
+    float midY = height / 2.0f;
+
+    // Visual Grid
+    g.setColour(juce::Colours::darkgrey.withAlpha(0.3f));
+    g.drawHorizontalLine((int)midY, 0.0f, width);
+
+    // Create the Waveform Path
+    juce::Path path;
+    
+    // We draw from Right to Left.
+    // x = width means "Now". x = 0 means "History".
+    // The 'zoomX' acts as pixel-per-sample spacing.
+    
+    // We need to find the start point (most recent sample)
+    // The most recent sample was written at (historyWriteIndex - 1)
+    
+    int idx = historyWriteIndex - 1;
+    if (idx < 0) idx = historySize - 1;
+
+    // Calculate starting Y
+    float sampleVal = historyBuffer[idx];
+    // Scale volume by ZoomY, centered around midY
+    // We use a log-ish scaling visual or simple linear. 
+    // Simple linear for volume curve is safer for "no jumping peaks".
+    float yPos = midY - (sampleVal * midY * 0.9f * zoomY); 
+    
+    // Clamp visual to screen bounds to prevent artifacts
+    yPos = juce::jlimit(0.0f, height, yPos);
+
+    path.startNewSubPath(width, yPos);
+
+    // Iterate backwards through history
+    for (int i = 1; i < historySize; ++i)
+    {
+        // Move index backwards
+        idx--;
+        if (idx < 0) idx = historySize - 1;
+
+        // Calculate X position
+        // i is "samples ago". 
+        // spacing is determined by zoomX (e.g., 2.0f = 2 pixels per sample)
+        float xPos = width - ((float)i * zoomX);
+
+        // Optimization: Stop drawing if we go off the left edge
+        if (xPos < -50.0f) break;
+
+        // Calculate Y position
+        float val = historyBuffer[idx];
+        float y = midY - (val * midY * 0.9f * zoomY);
+        y = juce::jlimit(0.0f, height, y);
+
+        path.lineTo(xPos, y);
+    }
+
+    // Draw the curve
+    g.setColour (juce::Colours::cyan);
+    g.strokePath (path, juce::PathStrokeType (2.0f));
+    
+    // Overlay info
+    g.setColour(juce::Colours::white);
+    g.setFont(14.0f);
+    g.drawText("Zoom X: " + juce::String(zoomX, 2) + " | Zoom Y: " + juce::String(zoomY, 2), 
+               10, 10, 200, 20, juce::Justification::topLeft);
+}
+
+void SmoothScopeAudioProcessorEditor::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
+{
+    // Sensitivity logic
+    float scrollAmount = wheel.deltaY;
+    
+    // If Shift is held, zoom Y (Amplitude), otherwise zoom X (Time)
+    // Or we can map Y-scroll to Y-zoom and X-scroll to X-zoom if trackpad.
+    // Requirement says: "zoom in and out the x and y axis with the mouse scroll wheel"
+    
+    // Let's assume:
+    // Ctrl/Cmd + Scroll = Zoom X
+    // Alt/Option + Scroll = Zoom Y
+    // Or just standard Vertical Scroll = Zoom X, Horizontal Scroll = Zoom Y
+    
+    // Implementation for typical mouse usage:
+    if (event.mods.isCommandDown() || event.mods.isCtrlDown())
+    {
+        // Zoom Y (Amplitude)
+        zoomY += (scrollAmount * 1.0f);
+        zoomY = juce::jlimit(minZoomY, maxZoomY, zoomY);
+    }
+    else
+    {
+        // Zoom X (Time Stretching)
+        // Note: Increasing zoomX makes points further apart (zoom in time)
+        // Decreasing makes them closer (zoom out time)
+        zoomX += (scrollAmount * 2.0f);
+        zoomX = juce::jlimit(minZoomX, maxZoomX, zoomX);
+    }
+    
     repaint();
 }
 
-void HistoryOpenGLComponent::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
+void SmoothScopeAudioProcessorEditor::resized()
 {
-    float s = samplesPerPixel.load();
-
-    if (wheel.deltaY > 0)
-        s = std::max (1.0f, s * 0.8f);
-    else
-        s = std::min (8192.0f, s * 1.25f);
-
-    samplesPerPixel.store (s);
-}
-
-void HistoryOpenGLComponent::paint (juce::Graphics& g)
-{
-    using namespace juce;
-
-    auto bounds = getLocalBounds().toFloat();
-    const int w = (int) bounds.getWidth();
-    const int h = (int) bounds.getHeight();
-
-    g.fillAll (Colours::black);
-
-    if (w <= 1 || h <= 1)
-        return;
-
-    const float spp    = samplesPerPixel.load(); // samples per pixel
-    const int   pixels = std::max (2, w);
-    const int   need   = (int) std::ceil (spp * pixels);
-
-    sampleScratch.resize (need);
-
-    const int available     = processor.history.available();
-    const int startRelative = std::max (0, available - need);
-
-    // Copy history into a temporary buffer
-    const int copied = processor.history.readBlock (sampleScratch.data(), startRelative, need);
-    if (copied < need)
-        std::fill (sampleScratch.begin() + copied, sampleScratch.end(), 0.0f);
-
-    Path path;
-    bool started = false;
-
-    for (int px = 0; px < pixels; ++px)
-    {
-        int s0 = (int) std::floor (px * spp);
-        int s1 = (int) std::floor ((px + 1) * spp);
-
-        s0 = jlimit (0, need - 1, s0);
-        s1 = jlimit (0, need - 1, s1);
-
-        float maxv = 0.0f;
-        for (int s = s0; s <= s1; ++s)
-            maxv = std::max (maxv, sampleScratch[(size_t) s]);
-
-        const float lv = logScale (maxv);
-        const float ny = jlimit (0.0f, 1.0f, lv);
-
-        const float x = (float) px;
-        // JUCE y=0 is top; we want 0 at bottom, 1 at top
-        const float y = jmap (ny, 0.0f, 1.0f, (float) h - 1.0f, 0.0f);
-
-        if (! started)
-        {
-            path.startNewSubPath (x, y);
-            started = true;
-        }
-        else
-        {
-            path.lineTo (x, y);
-        }
-    }
-
-    g.setColour (Colour::fromFloatRGBA (0.1f, 0.9f, 0.4f, 1.0f));
-    g.strokePath (path, PathStrokeType (2.0f));
-}
-
-//==============================================================================
-// Editor
-
-HistoryVolumeCurveAudioProcessorEditor::HistoryVolumeCurveAudioProcessorEditor (HistoryVolumeCurveAudioProcessor& p)
-    : AudioProcessorEditor (&p), glComp (p)
-{
-    setOpaque (true);
-    addAndMakeVisible (glComp);
-    setSize (800, 200);
-}
-
-HistoryVolumeCurveAudioProcessorEditor::~HistoryVolumeCurveAudioProcessorEditor() = default;
-
-void HistoryVolumeCurveAudioProcessorEditor::paint (juce::Graphics& g)
-{
-    g.fillAll (juce::Colours::black);
-}
-
-void HistoryVolumeCurveAudioProcessorEditor::resized()
-{
-    glComp.setBounds (getLocalBounds());
+    // Standard resize handling, paint deals with bounds automatically
 }

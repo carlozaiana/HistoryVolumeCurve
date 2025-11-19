@@ -1,80 +1,56 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include <atomic>
-#include <vector>
 
-//==============================================================================
-// Simple lock-free ring buffer storing floating-point samples
-class LockFreeRingBuffer
+class SmoothScopeAudioProcessor : public juce::AudioProcessor
 {
 public:
-    explicit LockFreeRingBuffer (size_t capacity);
+    SmoothScopeAudioProcessor();
+    ~SmoothScopeAudioProcessor() override;
 
-    void push (float v);
-    int  readBlock (float* dest, int startIndex, int count);
-    int  available() const noexcept;
-
-private:
-    std::vector<float>    buffer_;
-    const size_t          capacity_;
-    std::atomic<size_t>   writeIndex_   { 0 };
-    std::atomic<int64_t>  totalWritten_ { 0 };
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LockFreeRingBuffer)
-};
-
-//==============================================================================
-
-class HistoryVolumeCurveAudioProcessor  : public juce::AudioProcessor
-{
-public:
-    HistoryVolumeCurveAudioProcessor();
-    ~HistoryVolumeCurveAudioProcessor() override;
-
-    //==============================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
-
-   #ifndef JucePlugin_PreferredChannelConfigurations
-    bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
-   #endif
-
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
-    using juce::AudioProcessor::processBlock; // for double-precision buffers
 
-    //==============================================================================
     juce::AudioProcessorEditor* createEditor() override;
-    bool hasEditor() const override;
+    bool hasEditor() const override { return true; }
 
-    //==============================================================================
-    const juce::String getName() const override;
+    const juce::String getName() const override { return "SmoothScope"; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    bool isMidiEffect() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
 
-    bool acceptsMidi() const override;
-    bool producesMidi() const override;
-    bool isMidiEffect() const override;
-    double getTailLengthSeconds() const override;
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int index) override {}
+    const juce::String getProgramName (int index) override { return {}; }
+    void changeProgramName (int index, const juce::String& newName) override {}
 
-    //==============================================================================
-    int getNumPrograms() override;
-    int getCurrentProgram() override;
-    void setCurrentProgram (int index) override;
-    const juce::String getProgramName (int index) override;
-    void changeProgramName (int index, const juce::String& newName) override;
+    void getStateInformation (juce::MemoryBlock& destData) override {}
+    void setStateInformation (const void* data, int sizeInBytes) override {}
 
-    //==============================================================================
-    void getStateInformation (juce::MemoryBlock& destData) override;
-    void setStateInformation (const void* data, int sizeInBytes) override;
+    // --- Data Exchange for Visualization ---
+    // Simple thread-safe single-reader single-writer FIFO
+    static constexpr int fifoSize = 1024;
+    float fifoBuffer[fifoSize];
+    std::atomic<int> fifoWriteIndex { 0 };
+    std::atomic<int> fifoReadIndex { 0 };
 
-    // History buffer accessible from the editor (stores smoothed envelope)
-    LockFreeRingBuffer history;
+    // Helper to write to FIFO
+    void pushToFifo(float rmsValue)
+    {
+        int currentWrite = fifoWriteIndex.load(std::memory_order_acquire);
+        int nextWrite = (currentWrite + 1) % fifoSize;
+
+        // If buffer is full, we drop the sample (better than blocking audio)
+        if (nextWrite != fifoReadIndex.load(std::memory_order_acquire))
+        {
+            fifoBuffer[currentWrite] = rmsValue;
+            fifoWriteIndex.store(nextWrite, std::memory_order_release);
+        }
+    }
 
 private:
-    // Envelope follower state for smooth volume curve
-    float  levelEnv      = 0.0f;   // current envelope value (0..1)
-    float  attackCoeff   = 0.0f;   // coefficient for rising edges
-    float  releaseCoeff  = 0.0f;   // coefficient for falling edges
-    double currentSampleRate = 44100.0;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HistoryVolumeCurveAudioProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SmoothScopeAudioProcessor)
 };
