@@ -1,24 +1,35 @@
 cmake_minimum_required(VERSION 3.22)
+project(SmoothVolumeHistory VERSION 1.0.0 LANGUAGES CXX)
 
-project(SmoothVolumeHistory VERSION 1.0.0)
+# macOS 10.13 + Universal binary
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13")
+set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
 
-set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
-set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build universal binary")
+# === Download JUCE automatically ===
+include(FetchContent)
 
-add_subdirectory(JUCE)
+FetchContent_Declare(
+    juce
+    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+    GIT_TAG        origin/master
+    GIT_SHALLOW    TRUE
+)
 
+FetchContent_MakeAvailable(juce)
+
+# === Plugin definition ===
 juce_add_plugin(SmoothVolumeHistory
-    COMPANY_NAME "YourName"
-    PLUGIN_MANUFACTURER_CODE Xxxx
-    PLUGIN_CODE VolH
-    FORMATS VST3
-    PRODUCT_NAME "Smooth Volume History"
-    IS_SYNTH FALSE
-    NEEDS_MIDI_INPUT FALSE
-    NEEDS_MIDI_OUTPUT FALSE
+    COMPANY_NAME              "YourName"
+    PLUGIN_MANUFACTURER_CODE  Xxxx
+    PLUGIN_CODE               VolH
+    FORMATS                   VST3
+    PRODUCT_NAME              "Smooth Volume History"
+    IS_SYNTH                  FALSE
+    NEEDS_MIDI_INPUT          FALSE
+    NEEDS_MIDI_OUTPUT         FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD TRUE
-    VST3_CATEGORIES "Analyzer" "Utility"
+    COPY_PLUGIN_AFTER_BUILD   TRUE
+    VST3_CATEGORIES           "Analyzer" "Utility"
 )
 
 target_sources(SmoothVolumeHistory
@@ -48,5 +59,3 @@ target_link_libraries(SmoothVolumeHistory
         juce::juce_recommended_l10n_flags
         juce::juce_recommended_warning_flags
 )
-
-juce_generate_juce_header(SmoothVolumeHistory)
